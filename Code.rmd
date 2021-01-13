@@ -1,0 +1,743 @@
+---
+title: "Prediction of Mental Health"
+author: "Abhishek Shetty"
+date: "3/20/2020"
+output:
+  html_document: default
+  word_document: default
+---
+
+````{r  warning=FALSE, echo = FALSE}
+
+library("tidyverse")
+library("gridExtra")
+library("BCA")
+library("nnet")
+library("caret")
+library("lattice")
+library("class")
+library('randomForest')
+library("tidyverse")
+library("caretEnsemble")
+library("psych")
+library("Amelia")
+library("mice")
+library("GGally")
+library("rpart")
+library("e1071")
+library(MASS)
+library(ROCR)
+library(graphics)
+library(ggplot2)
+library("dummies")
+```
+
+
+
+```{r cars}
+setwd("C:/Users/abhis/Music/mental-health-in-tech-survey")
+
+data <- read.csv("survey.csv")
+
+da <- "survey.csv" %>% read.csv()
+ 
+head(data)
+
+
+summary(data)
+
+data <- data[ , !(names(data) %in% "state")]
+data <- data[ , !(names(data) %in% "Timestamp")]
+data <- data[ , !(names(data) %in% "comments")]
+data <- data[ , !(names(data) %in% "self_employed")]
+
+
+```
+
+
+
+```{r}
+df <- data 
+
+head(df$Age)
+
+data$no_employees1 <- data$no_employees
+
+data$no_employees <- factor(data$no_employees, levels = c("1-5","6-25","26-100","100-500", "500-1000","More than 1000"))
+
+ggplot(data,aes(x = no_employees))+ geom_bar(fill = "pink") + ggtitle("ordered company size")
+
+table(data$no_employees)
+
+
+
+```
+
+#Cleaning Age Data and forming relative frequency table for Age
+
+```{r }
+
+
+#checking for outliers
+
+g <- df %>% ggplot(aes(x=Age)) +
+  geom_histogram() + ggtitle("Distribution of Age")
+g
+
+table(df$Age)
+boxplot(df$Age)
+
+barplot(table(data$Age))
+
+
+# Print out the outliers
+outlier_age <- subset(da[2:4], Age < 11 | Age > 75 )
+nrow(outlier_age)
+outlier_age
+barplot(table(data$Age))
+
+
+#removing outliers
+
+data<- subset(data, Age > 10 & Age <75)
+
+
+boxplot(data$Age)
+barplot(table(data$Age))
+
+#removing rows with missing data
+data <- na.omit(data)
+
+summary(data)
+
+
+Age1 <- data$Age
+
+head(data)
+
+data$Age <-cut(data$Age, breaks = c(10, 24, 34, 75), labels = c('Fresh', 'Junior', 'Senior'))
+
+ggplot(data,aes(x= Age))+ geom_bar(fill = "pink") + ggtitle("ordered company size")
+
+table(data$Age)
+
+# Create the relative frequency table of age
+table(data$Age)/length(data$Age)
+
+
+```
+
+
+#Gender Unification and data cleaning   # plot the gender data 
+
+```{r pressure, echo=FALSE}
+
+table(data$Gender)
+
+data$Gender <- str_to_lower(data$Gender)
+male_cat <- c("male", "m", "male-ish", "maile", "mal", "male (cis)", "make", "male ", "man","msle", "mail", "malr","cis man", "cis male")
+trans_cat <- c("trans-female", "something kinda male?", "queer/she/they", "non-binary","nah", "all", "enby", "fluid", "genderqueer", "androgyne", "agender", "male leaning androgynous", "guy (-ish) ^_^", "trans woman", "neuter", "female (trans)", "queer", "ostensibly male, unsure what that really means" , "p","a little about you", "guy (-ish) ^_^")
+female_cat <- c("cis female", "f", "female", "woman",  "femake", "female ","cis-female/femme", "female (cis)", "femail")
+
+data$Gender <- sapply(as.vector(data$Gender), function(x) if(x %in% male_cat) "male" else x )
+data$Gender <- sapply(as.vector(data$Gender), function(x) if(x %in% female_cat) "female" else x )
+data$Gender <- sapply(as.vector(data$Gender), function(x) if(x %in% trans_cat) "trans" else x )
+
+```
+
+
+
+
+```{r}
+
+ ggplot(data, aes(x=tech_company, fill = (treatment))) +
+  geom_bar(position = "fill") + ggtitle("Tech_company Treatment Ratio")
+ 
+ 
+techdata <- filter(data, tech_company == "Yes")
+summary(techdata)
+summary(data)
+```
+
+Plotting Treatment vs Age, 
+
+```{r}
+
+#Density plot of Age with treatment as a factor
+
+
+A1 <- ggplot(data, aes(x=Age1, fill = factor(treatment))) +
+  geom_density(alpha = 0.9) + ggtitle("Distribution of Age")
+A1
+
+head(df$Age)
+head(df$treatment)
+
+# Comparing treatment ratio in Age groups
+A2 <- ggplot(data, aes(x=Age, fill = (treatment))) +
+  geom_bar(position = "fill") + ggtitle("Treatment Ratio in different Age Groups")
+
+# Comparing treatment ratio in Age groups focusing on tech field
+A3 <- ggplot(techdata, aes(x=Age, fill = (treatment))) +
+  geom_bar(position = "fill") + ggtitle("Treatment Ratio in different Age Groups on tech field")
+
+  
+head(data)
+grid.arrange(A1, A2, A3, nrow = 1)
+
+```
+
+# Making plots to select Columns with higher variablity. 
+
+```{r}
+
+
+for(i in 1:length(data)){
+  au <- prop.table(table(data$treatment, data[,i]), 1)*100 
+  percent <- round(max(abs(au[1,]-au[2,])), digits = 2)
+
+  if(percent > 15 & percent < 99){
+    
+    # Data preparing to visualization
+    au <- prop.table(table(data$treatment, data[,i]), 1)*100 
+    nom <- colnames(au)
+    type <- c(rep("Yes",ncol(au)),rep("No",ncol(au)))
+    val <- append(au[1,], au[2,])
+    data.au<-data.frame(nom=nom,type=type ,val=val)
+    
+    # Use of the library ggplot2 to data visualization 
+    g <- ggplot() + geom_bar(data=data.au,aes(x=nom, y=val,fill=type),stat='identity',position='dodge')+
+      coord_flip() +
+      labs(
+        x = "Importance",
+        y = "",
+        title = paste("Mental Health comparation about ", names(data[i]), sep=""),
+        subtitle = paste("The most different is ", percent, "%", sep=""),
+        caption = "\nDetermined by matrix of covariances"
+        ) %>% suppressWarnings()
+    print(g)
+  }
+
+}
+```
+
+
+# Selecting variables with higher variablity
+
+ i.e Gender, family_history, work_interfere, benefits, care_options, anonymity
+ 
+```{r}
+
+data <- data.frame(gender= data$Gender,
+                   family_history= data$family_history,
+                   work_interfere= data$work_interfere,
+                   benefits= data$benefits, 
+                   care_options= data$care_options,
+                   anonymity= data$anonymity,
+                   treatment=data$treatment)
+head(data)
+```
+
+ 
+# We need to make models and test them 
+
+1) Logistic Regression
+  
+```{r}
+set.seed(100)
+
+train_ind <- sample(seq_len(nrow(data)), size = 0.5 * nrow(data))
+valid_ind <- sample(setdiff(row.names(data), train_ind), 0.3*nrow(data))
+test_ind <- setdiff(row.names(data), union(train_ind, valid_ind))
+train <- data[train_ind, ]
+head(train)
+valid <- data[valid_ind, ]
+test <- data[test_ind, ]
+
+
+#train model
+lm_train <- glm( treatment ~ family_history + work_interfere + benefits + care_options + anonymity, data = data, family = "binomial" )
+summary(lm_train)
+
+# Predict on training set
+train$predict_probs <- predict(lm_train, train, type = "response")
+train$predict <- ifelse(train$predict_probs < 0.5, "No", "Yes")
+
+# Predict on test set
+test$predict_probs <- predict(lm_train, test, type = "response")
+test$predict <- ifelse(test$predict_probs < 0.5, "No", "Yes")
+
+head(test)
+```
+
+
+```{r}
+#Evalutating the Model by Confusion Matrix
+
+# Confusion matrix - training data
+cm_train <- table(train$treatment, train$predict, dnn = c("real", "predict"))
+cm_train
+
+
+print("Accuracy Training data :"  )
+Accuracy <- round(( cm_train['Yes','Yes'] + cm_train['No','No'] ) / sum(cm_train),2)
+Accuracy
+
+print("Precision Training data:"  )
+Precision <- round(cm_train['Yes','Yes'] / sum(cm_train['Yes',]),2)
+Precision
+
+print("Recall Training data:"  )
+Recall <-  round(cm_train['Yes','Yes'] / sum(cm_train[,'Yes']),2)
+Recall
+
+
+# Confusion matrix - testing data
+cm_test <- table(test$treatment, test$predict, dnn = c("real", "predict"))
+cm_test
+
+print("Accuracy Test data:"  )
+Accuracy <- round(( cm_test['Yes','Yes'] + cm_test['No','No'] ) / sum(cm_test),2)
+Accuracy
+
+print("Precision Test data:"  )
+Precision <- round(cm_test['Yes','Yes'] / sum(cm_test['Yes',]),2)
+Precision
+
+print("Recall Test data:"  )
+Recall <-  round(cm_test['Yes','Yes'] / sum(cm_test[,'Yes']),2)
+Recall
+
+
+
+# The outcomes shows us that there is no overfitting because the metrics are comparable
+
+head(train)
+lm_train
+
+# LIFT CHART 
+  lift.chart(c("lm_train"), data=train, targLevel="Yes",
+    trueResp=0.01, type="cumulative", sub="Validation")
+  
+  lift.chart(c("lm_train"), data=train, targLevel="Yes",
+    trueResp=0.01, type="incremental", sub="Validation")
+  
+# Success percent of the model
+percent <- data.frame(methods=c("Logistic Regression","Random Forest","Neuronal Network","Knn","Naive Bayes", "Support Vector Machine", "Linear Discrinminant Analysis"), value=c(0,0,0,0,0,0,0))
+( percent$value[1] <- sum(diag(cm_test)) / sum(cm_test) * 100 )
+  
+  
+
+```
+
+2) Random Tree
+```{r}
+
+set.seed(100)
+head(data)
+train_ind <- sample(1:nrow(data), 0.5 * nrow(data))
+
+
+ ##extract training set
+train <- data[train_ind,] 
+
+head(train)
+##extract testing set
+test <- data[-train_ind,] 
+
+
+model <- randomForest(treatment ~ .,  data= train)
+
+# Prediction. Creating a dataframe with the probabilities
+predict_mod <- predict(model, test)
+
+# Confussion matrix
+( cm <- with(test, table(predict_mod, treatment)) )
+
+
+# Success Percent of the model 
+( percent$value[2] <- sum(diag(cm)) / sum(cm) * 100 )
+
+
+
+```
+
+3) Neuronal Network
+```{r}
+set.seed(100)
+head(data)
+train_ind <- sample(1:nrow(data), 0.5 * nrow(data))
+
+
+ ##extract training set
+train <- data[train_ind,] 
+
+head(train)
+##extract testing set
+test <- data[-train_ind,] 
+## NEURONAL NETWORK
+
+# Calculation of size and decay parameters
+# size: number of intermediate hidden unit
+# decay: avoiding overfitting
+
+parameter <- train( treatment ~ . , data=train, method="nnet", trace=F)
+
+size <- parameter$bestTune$size
+decay <- parameter$bestTune$decay
+#parameter$bestTune
+
+# Neuronal Network model
+model <- nnet(treatment ~ ., size=size, decay=decay, trace=F, data=train)
+
+
+# Prediction. Creating a dataframe with the probabilities
+predict <- data.frame(predict(model, test), treatment=predict(model,test, type="class"))
+head(test)
+
+```
+
+#Evaluation
+
+```{r}
+head(predict)
+# Confussion matrix
+mc <- table(test$treatment, predict$treatment, dnn = c("Real", "Predicted"))
+mc
+
+plot(predict)
+
+
+print("Accuracy :"  )
+Accuracy <- round(( mc['Yes','Yes'] + mc['No','No'] ) / sum(mc),2)
+Accuracy
+
+print("Precision data:"  )
+Precision <- round(mc['Yes','Yes'] / sum(mc['Yes',]),2)
+Precision
+
+print("Recall data:"  )
+Recall <-  round(mc['Yes','Yes'] / sum(mc[,'Yes']),2)
+Recall
+
+# Success Percent of the model 
+( percent$value[3] <- sum(diag(mc)) / sum(mc) * 100 )
+
+
+
+```
+
+4) KNN
+
+```{r}
+head(data)
+
+set.seed(100)
+
+#Creating Dummy Variables
+
+data1 <- cbind(data, dummy(data$gender), dummy(data$family_history), dummy(data$work_interfere), dummy(data$benefits), dummy(data$care_options), dummy(data$anonymity))
+
+head(data1)
+
+
+
+data1 <- data1[7:25]
+
+head(data1)
+
+##the normalization function is created
+ nor <-function(x) { (x -min(x))/(max(x)-min(x))   }
+ 
+ ##Run nomalization on first 4 coulumns of dataset because they are the predictors
+ data1_norm <- as.data.frame(lapply(data1[,c(2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19)], nor))
+ 
+train_ind <- sample(1:nrow(data1), 0.5 * nrow(data1))
+
+head(train_ind)
+
+
+ ##extract training set
+train <- data1_norm[train_ind,] 
+##extract testing set
+ test <- data1_norm[-train_ind,] 
+ ##extract 1st column of train dataset because it will be used as 'cl' argument in knn function.
+ target_category <- data1[train_ind,1]
+ ##extract 1st column ff test dataset to measure the accuracy
+ test_category <- data1[-train_ind,1]
+ 
+ head(train)
+ 
+ NROW(train)
+ 
+ 
+ # forminf KNN models for different K Values
+ knn.22 <- knn(train,test,cl=target_category,k=22)
+ knn.23 <- knn(train,test,cl=target_category,k=23)
+ knn.24 <- knn(train,test,cl=target_category,k=24)
+ knn.25 <- knn(train,test,cl=target_category,k=25)
+ knn.26 <- knn(train,test,cl=target_category,k=26)
+ knn.27 <- knn(train,test,cl=target_category,k=27)
+
+
+# Confusion Matrix
+ 
+tab.22 <- table(knn.22, test_category)
+tab.23 <- table(knn.23, test_category)
+tab.24 <- table(knn.24, test_category)
+tab.25 <- table(knn.25, test_category)
+tab.26 <- table(knn.26, test_category)
+tab.27 <- table(knn.27, test_category)
+
+
+```
+
+```{r}
+
+ accuracy <- function(x){sum(diag(x)/(sum(rowSums(x)))) * 100}
+ accuracy(tab.22)
+ accuracy(tab.23)
+ accuracy(tab.24)
+ accuracy(tab.25)
+ accuracy(tab.26)
+ accuracy(tab.27)
+ 
+# Success Percent of the model 
+( percent$value[4] <- sum(diag(tab.25)) / sum(tab.25) * 100 )
+ 
+```
+We get maximum accuracy ie 75.35% for K=25
+
+
+
+5) Naive Bayes
+
+```{r}
+
+set.seed(100)
+head(data)
+train_ind <- sample(1:nrow(data), 0.5 * nrow(data))
+
+
+ ##extract training set
+train <- data[train_ind,] 
+
+head(train)
+##extract testing set
+test <- data[-train_ind,] 
+
+x = train[,-7]
+y = train$treatment
+
+model <- train(x,y,'nb',trControl=trainControl(method='cv',number=10))
+
+
+
+# Prediction of the Naive Bayes model
+nb_predict <- predict(model,newdata = test )
+
+# Confusion Matrix
+( nb_cm <- with(test, table(nb_predict, treatment)) )
+
+# Success Percent of the model 
+( percent$value[5] <- sum(diag(nb_cm)) / sum(nb_cm) * 100 )
+
+```
+
+
+
+6) Support vector machine
+
+```{r}
+
+
+set.seed(100)
+head(data)
+train_ind <- sample(1:nrow(data), 0.5 * nrow(data))
+
+
+ ##extract training set
+train <- data[train_ind,] 
+
+head(train)
+##extract testing set
+test <- data[-train_ind,] 
+
+classifier <- svm(formula = treatment ~ .,
+                 data = train,
+                 type = 'C-classification',
+                 kernel = 'linear')
+classifier
+
+# Predict on training set
+train$predict_probs <- predict(classifier, train, type = "response")
+
+# Predict on test set
+test$predict_probs <- predict(classifier, test, type = "response")
+
+
+
+head(test)
+summary(test)
+
+head(classifier)
+head(test)
+
+y_pred <- predict(classifier, newdata = test[-7])
+summary(y_pred)
+head(y_pred)
+y_train_pred <- predict(classifier, newdata = train[-7])
+
+
+
+```
+
+# EValuation
+
+```{r}
+cm_test <- table(test[, 7], y_pred, dnn = c("Real", "Predicted"))
+cm_test
+
+print("Accuracy Test data:"  )
+Accuracy <- round(( cm_test['Yes','Yes'] + cm_test['No','No'] ) / sum(cm_test),2)
+Accuracy
+
+print("Precision Test data:"  )
+Precision <- round(cm_test['Yes','Yes'] / sum(cm_test['Yes',]),2)
+Precision
+
+print("Recall Test data:"  )
+Recall <-  round(cm_test['Yes','Yes'] / sum(cm_test[,'Yes']),2)
+Recall
+
+
+
+cm_train <- table(train[, 7], y_train_pred , dnn = c("Real", "Predicted"))
+cm_train
+
+print("Accuracy Training data :"  )
+Accuracy <- round(( cm_train['Yes','Yes'] + cm_train['No','No'] ) / sum(cm_train),2)
+Accuracy
+
+print("Precision Training data:"  )
+Precision <- round(cm_train['Yes','Yes'] / sum(cm_train['Yes',]),2)
+Precision
+
+print("Recall Training data:"  )
+Recall <-  round(cm_train['Yes','Yes'] / sum(cm_train[,'Yes']),2)
+Recall
+
+# Success Percent of the model 
+( percent$value[6] <- sum(diag(cm_test)) / sum(cm_test) * 100 )
+```
+
+
+
+7) Linear Discriminant Analysis 
+
+```{r}
+
+set.seed(100)
+head(data)
+train_ind <- sample(1:nrow(data), 0.5 * nrow(data))
+
+
+ ##extract training set
+train <- data[train_ind,] 
+
+head(train)
+##extract testing set
+test <- data[-train_ind,] 
+head(test)
+ ##extract 1st column of train dataset because it will be used as 'cl' argument in knn function.
+ target_category <- data[train_ind,7]
+ target_category
+ ##extract 1st column ff test dataset to measure the accuracy
+ test_category <- data[-train_ind,7]
+ 
+ 
+lda.model = lda (treatment ~ family_history + work_interfere + benefits + care_options + anonymity, data=train)
+
+# Prediction. Creating a dataframe with the probabilities
+predict <- data.frame(predict(lda.model, test), treatment=predict(lda.model,test, type="class"))
+head(test)
+
+lda.predict <- predict(lda.model, newdata = test)
+
+```
+
+
+```{r}
+
+### CONSTRUCTING ROC AUC PLOT:
+# Get the posteriors as a dataframe.
+lda.predict.posteriors <- as.data.frame(lda.predict$posterior)
+
+lda.predict.posteriors
+summary(lda.predict.posteriors)
+# Evaluate the model
+pred <- prediction(lda.predict.posteriors[,2], test$treatment)
+roc.perf = performance(pred, measure = "tpr", x.measure = "fpr")
+auc.train <- performance(pred, measure = "auc")
+auc.train <- auc.train@y.values
+# Plot
+plot(roc.perf) + abline(a=0, b= 1) + text(x = .25, y = .65 ,paste("AUC = ", round(auc.train[[1]],3), sep = ""))
+
+
+
+```
+
+# Evaluation\
+
+```{r}
+
+
+head(predict)
+# Confussion matrix
+mc <- table(test$treatment, predict$treatment.class, dnn = c("Real", "Predicted"))
+
+head(test$treatment)
+mc
+
+plot(predict)
+
+
+print("Accuracy :"  )
+Accuracy <- round(( mc['Yes','Yes'] + mc['No','No'] ) / sum(mc),2)
+Accuracy
+
+print("Precision data:"  )
+Precision <- round(mc['Yes','Yes'] / sum(mc['Yes',]),2)
+Precision
+
+print("Recall data:"  )
+Recall <-  round(mc['Yes','Yes'] / sum(mc[,'Yes']),2)
+Recall
+
+# Success Percent of the model 
+( percent$value[7] <- sum(diag(mc)) / sum(mc) * 100 )
+
+```
+
+# Success Rate of each Algorithm
+
+```{r}
+
+percent$methods <- paste(percent$methods, " - " , round(percent$value,digits = 3) , "%" , sep = "")
+visualize <- data.frame(valor=percent$value, group= percent$methods)
+visualize2 <- rbind(visualize,data.frame(valor=50, group= visualize$group))
+
+ggplot() +
+  geom_point(data = visualize, aes(x = valor, y = group, color = group), size = 4) +
+  geom_path(data = visualize2, aes(x = valor, y = group, color = group, group = group), size = 2) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5)) +
+  labs(
+    x = "Percentage of success",
+    y = "Methods",
+    title = "Percentage of success of the methods"
+  )
+```
+
+# From the above plot, we conclude that the logistic regression model has the highest percentage of success.
+ 
